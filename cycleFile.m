@@ -17,7 +17,7 @@ for i = 1:numDateFiles
     holderStr = strcat(headerFile,'\',dateFiles(i));
     holderDir = dir(holderStr{1});
     for j=1:size(holderDir)
-       if(~strcmp(holderDir(j).name,'.') & ~strcmp(holderDir(j).name,'..') & ~strcmp(holderDir(j).name,'.DS_Store'))
+       if(~strcmp(holderDir(j).name,'.') && ~strcmp(holderDir(j).name,'..') && ~strcmp(holderDir(j).name,'.DS_Store'))
            holderPath = strcat(holderDir(j).folder,'\',holderDir(j).name);
            hiveSessionFiles = [hiveSessionFiles; {holderPath, holderDir(j).name}];
        end
@@ -29,7 +29,7 @@ experimentFiles = dir(strcat(headerFile,'\Experiments'));
 hiveFiles = {}; %This will store the path to all of the experiment hive files
 
 for i = 1:size(experimentFiles)
-    if(~strcmp(experimentFiles(i).name,'.') & ~strcmp(experimentFiles(i).name,'..') & ~strcmp(experimentFiles(i).name,'.DS_Store'))
+    if(~strcmp(experimentFiles(i).name,'.') && ~strcmp(experimentFiles(i).name,'..') && ~strcmp(experimentFiles(i).name,'.DS_Store'))
         holderPath = strcat(experimentFiles(i).folder,'\',experimentFiles(i).name);
         hiveFiles = [hiveFiles; {holderPath, experimentFiles(i).name}];
     end
@@ -124,12 +124,12 @@ toc
 %% Override data vectors with sample data for testing
 
 UseTestData = 0;
-if UseTestData
-    disp('Warning from priyaslush: data vectors are being overridden with sample data')
-    load('/Users/hokansok/Google Drive/OSU/Electrophys Core/MATLAB/spikesortbootcamp/SpikeSortData.mat')
-    timeVector = Time;
-    v = Vtotal;
-end
+% if UseTestData
+%     disp('Warning from priyaslush: data vectors are being overridden with sample data')
+%     load('/Users/hokansok/Google Drive/OSU/Electrophys Core/MATLAB/spikesortbootcamp/SpikeSortData.mat')
+%     timeVector = Time;
+%     v = Vtotal;
+% end
 
 %% Analyze data vectors
 
@@ -170,8 +170,23 @@ set(sumFigHandle, 'Position', [0 600 FWidth FHeight])
 title(strcat(hiveSessionFiles{k,2}(1:13),' - amp-B-017.dat'))
 xlabel('Time (s)')
 ylabel('Response (uV)')
-YMax = 5000;
-YMin = -5000;
+
+%% Section for finding a proper y max and min
+YMax = 0;
+YMin = 0;
+for i = 1:size(v)
+    if(v(i) > YMax)
+        YMax = v(i);
+    end
+    if(v(i) < YMin)
+        YMin = v(i);
+    end
+end
+
+display(YMax);
+display(YMin);
+
+%%
 ylim([YMin YMax]);
 if max(abs(vFilt)) > YMax
     disp('WARNING from priyaslush: the summary figure y limits are set so that some of the trace is not being shown.')
@@ -184,7 +199,6 @@ load(ExperimentInfoMatfile)
 
 % Construct odor "on" matrices [onset(ms) offset(ms) concentration(1-100)]
 numParameters = size(tr,2);
-i=1;
 jLin=1;
 jEth=1;
 for i = 1:numParameters
@@ -245,6 +259,29 @@ toc
 % Identify a baseline period and get stdev during it
 disp('BaselinePeriod window is currently hard-coded')
 StdevThreshold = 300; % What percent of the stdev should be used as the threshold?
+%% Script to find a non-noisy period after a low scent presentation
+%Will be changed when we add the baseline period at the start
+BaselinePeriod = [475 495];
+currentMean = 999999999999;
+for i = 1:size(linaloolMat)
+   if(linaloolMat(i,3) == 11)
+       startOfWindow = linaloolMat(i,1) * 20 + (10 * 20000);%Starts window 10 seconds after scent presnetation
+       endOfWindow = startOfWindow + (20 * 20000); %Ends window after 20 seconds
+       A = v(startOfWindow:endOfWindow);
+       A = abs(A);
+       meanValue = mean(A);
+       
+       if(meanValue < currentMean)
+            currentMean = meanValue;
+            startOfBase = startOfWindow/20000;
+            endOfBase = endOfWindow/20000;
+            BaselinePeriod = [startOfBase endOfBase];
+       end
+   end
+end
+
+
+%%
 BaselinePeriod = [475 495]; %manually chosen not-very-noisy period
 % Highlight the baseline period as orange on the summary plot
 baseStart = find(timeVector == BaselinePeriod(1)); %Sample of start of baseline
@@ -269,82 +306,6 @@ stdLinesH = line( [timeVector(1) timeVector(1) ; timeVector(end) timeVector(end)
 hold on;
 %
 
-%%
-%for finding the spikes and getting data on them
-%collects start, end, peak time/value, scent type, power, and time since
-%scent
-%{
-spikeInfo = {};
-
-start_time = 1;
-end_time = size(timeVector);
-start_of_spike = 1;
-end_of_spike = 1;
-
-for i = start_time:end_time
-    if(vFilt(i) > spikeThresh && start_of_spike == 1)
-        start_of_spike = timeVector(i);
-    elseif(vFilt(i) < spikeThresh && start_of_spike ~= 1)
-        end_of_spike = timeVector(i);
-            timeOfSpike = findAboveSpike(start_of_spike, end_of_spike, vFilt);
-        if(timeOfSpike == 0)
-            fprintf("No spike found between %5.5f and %5.5f\n", start_of_spike, end_of_spike);
-            %above line should never print, there should always be a spike found
-        else
-            lastScent = findLastScent(timeOfSpike, linaloolConcTrace, ethanolConcTrace);
-            if(strcmp(lastScent(1,1),""))
-                fprintf("ERROR NO LAST SCENT FOUND");
-            end
-            spikeInfo = [spikeInfo; {start_of_spike, end_of_spike,timeOfSpike/sr,vFilt(timeOfSpike), lastScent{1,1}, lastScent{1,2}, lastScent{1,3}/sr}]; 
-            %^^add a new row of spike data, contains time when spike passes
-            %cutoff line at the start and end, the time of the local peak,
-            %and the value at that time
-
-        end
-        start_of_spike = 1;
-        end_of_spike = 1;
-    end
-end
-
-%marks the spikes on the plot of the voltages
-%red for linalool, blue for ethanool
-numSpikes = size(spikeInfo);
-numSpikes = numSpikes(1,1);
-for i = 1:numSpikes
-   % markSize = spikeInfo{i,7}/(31/6);
-   % marSize = fix(markSize);
-    if(strcmp(spikeInfo{i,5},"linalool"))
-        plot(spikeInfo{i,3}, spikeInfo{i,4}, 'r*','MarkerSize',3);
-    elseif(strcmp(spikeInfo{i,5},"ethanol"))
-        plot(spikeInfo{i,3}, spikeInfo{i,4}, 'b*','MarkerSize',3);
-    end
-    hold on;
-end
-
-scentPower = cell2mat(spikeInfo(:,6));
-
-linaloolScentPowers = {};
-ethanolScentPowers = {};
-
-for i = 1:numSpikes
-   if(strcmp(spikeInfo{i,5},"linalool"))
-        linaloolScentPowers = [linaloolScentPowers; {spikeInfo{i,6}}];
-   elseif(strcmp(spikeInfo{i,5},"ethanol"))
-        ethanolScentPowers = [ethanolScentPowers ; {spikeInfo{i,6}}];
-   end
-end
-
-linaloolScentPowers = cell2mat(linaloolScentPowers);
-ethanolScentPowers = cell2mat(ethanolScentPowers);
-
-figure;
-histogram(linaloolScentPowers, 'FaceColor', 'r', 'BinMethod', 'integers');
-title(strcat(hiveSessionFiles{k,2}(1:13),' - Odor Histogram'));
-ylabel("Counts");
-xlabel("Odor Strength (?)");
-hold on;
-histogram(ethanolScentPowers, 'FaceColor', 'b');
-%}
 
 
 %%
@@ -354,12 +315,6 @@ d = designfilt('bandstopiir','FilterOrder',2, ...
                'HalfPowerFrequency1',59,'HalfPowerFrequency2',61, ...
                'DesignMethod','butter','SampleRate',sr);
 y = filtfilt(d,v);
- 
-% figure;
-% plot(timeVector, y);
-% hold on;
-% stdLinesH = line( [timeVector(1) timeVector(1) ; timeVector(end) timeVector(end)] , [spikeThresh -spikeThresh ; spikeThresh -spikeThresh], 'Color', BaselineStdevColor);
-% hold on
 
 spikeInfo = {};
 
@@ -501,9 +456,9 @@ ethanolScentPowers = {};
 
 for i = 1:numSpikes
    if(strcmp(spikeInfo{i,5},"linalool"))
-        linaloolScentPowers = [linaloolScentPowers; {spikeInfo{i,7}}];
+        linaloolScentPowers = [linaloolScentPowers; spikeInfo(i,7)];
    elseif(strcmp(spikeInfo{i,5},"ethanol"))
-        ethanolScentPowers = [ethanolScentPowers ; {spikeInfo{i,7}}];
+        ethanolScentPowers = [ethanolScentPowers ; spikeInfo(i,7)];
    end
 end
 
@@ -520,14 +475,14 @@ print(newFile, '-dpng');
 %this script will show the spikes overlayed atop eachother on a plot
 figure;
 
-for i = 1:size(spikeInfo) %Below, linalool, low
+for i = 1:size(spikeInfo) %linalool, low
     if(spikeInfo{i,4} > 0 && spikeInfo{i,5} == 'linalool' && spikeInfo{i,6} == 11)
         spikeMidIndex = spikeInfo{i,3} * sr;
         spikeBounds = 1 * sr;
 
         spikeStartIndex = spikeMidIndex - spikeBounds;
         if(spikeStartIndex < 0)
-            spikeStartIndex = 0;
+            spikeStartIndex = 1;
         end
         spikeEndIndex = spikeMidIndex + spikeBounds;
         lengthOfSpike = spikeEndIndex - spikeStartIndex;
@@ -539,18 +494,38 @@ for i = 1:size(spikeInfo) %Below, linalool, low
         overlay.Color(4) = 0.05;
         hold on;
     end
+    if(spikeInfo{i,4} < 0 && spikeInfo{i,5} == 'linalool' && spikeInfo{i,6} == 11)
+        spikeMidIndex = spikeInfo{i,3} * sr;
+        spikeBounds = 1 * sr;
+
+        spikeStartIndex = spikeMidIndex - spikeBounds;
+        if(spikeStartIndex < 0)
+            spikeStartIndex = 4;
+        end
+        spikeEndIndex = spikeMidIndex + spikeBounds;
+        lengthOfSpike = spikeEndIndex - spikeStartIndex;
+        
+        additionalLength = size(v(spikeStartIndex:spikeEndIndex)) - size(timeVector(1:lengthOfSpike));
+        lengthOfSpike = lengthOfSpike + additionalLength;
+        
+        overlay = plot(timeVector(1:lengthOfSpike), v(spikeStartIndex:spikeEndIndex), 'k');
+        overlay.Color(4) = 0.04;
+        hold on;
+    end
 end
 xlabel("Relative Time (s)");
 ylabel("Responses (uV)");
-title("Low Linalool Above Spikes");
+title("Low Linalool Spikes");
 
-newFile = strcat(beeOutputFile, '\lowTopLinaloolTrace');
+newFile = strcat(beeOutputFile, '\lowLinaloolTrace');
 
 print(newFile, '-dpng');
 
+
+%%
 figure;
 
-for i = 1:size(spikeInfo) %Below, linalool, med
+for i = 1:size(spikeInfo) %linalool, med
     if(spikeInfo{i,4} > 0 && spikeInfo{i,5} == 'linalool' && spikeInfo{i,6} == 33)
         spikeMidIndex = spikeInfo{i,3} * sr;
         spikeBounds = 1 * sr;
@@ -566,19 +541,37 @@ for i = 1:size(spikeInfo) %Below, linalool, med
         overlay.Color(4) = 0.05;
         hold on;
     end
+    
+    if(spikeInfo{i,4} < 0 && spikeInfo{i,5} == 'linalool' && spikeInfo{i,6} == 33)
+        spikeMidIndex = spikeInfo{i,3} * sr;
+        spikeBounds = 1 * sr;
+
+        spikeStartIndex = spikeMidIndex - spikeBounds;
+        spikeEndIndex = spikeMidIndex + spikeBounds;
+        lengthOfSpike = spikeEndIndex - spikeStartIndex;
+        
+        additionalLength = size(v(spikeStartIndex:spikeEndIndex)) - size(timeVector(1:lengthOfSpike));
+        lengthOfSpike = lengthOfSpike + additionalLength;
+        
+        overlay = plot(timeVector(1:lengthOfSpike), v(spikeStartIndex:spikeEndIndex), 'k');
+        overlay.Color(4) = 0.04;
+        hold on;
+    end
 end
 
 xlabel("Relative Time (s)");
 ylabel("Responses (uV)");
-title("Medium Linalool Above Spikes");
+title("Medium Linalool Spikes");
 
-newFile = strcat(beeOutputFile, '\mediumTopLinaloolTrace');
+newFile = strcat(beeOutputFile, '\mediumLinaloolTrace');
 
 print(newFile, '-dpng');
 
+
+%%
 figure;
 
-for i = 1:size(spikeInfo) %Below, linalool, high
+for i = 1:size(spikeInfo) %linalool, high
     if(spikeInfo{i,4} > 0 && spikeInfo{i,5} == 'linalool' && spikeInfo{i,6} == 100)
         spikeMidIndex = spikeInfo{i,3} * sr;
         spikeBounds = 1 * sr;
@@ -599,20 +592,43 @@ for i = 1:size(spikeInfo) %Below, linalool, high
         overlay.Color(4) = 0.05;
         hold on;
     end
+    
+    if(spikeInfo{i,4} < 0 && spikeInfo{i,5} == 'linalool' && spikeInfo{i,6} == 100)
+        spikeMidIndex = spikeInfo{i,3} * sr;
+        spikeBounds = 1 * sr;
+        startDisplacement = 1;
+       
+        spikeStartIndex = spikeMidIndex - spikeBounds;
+        if(spikeStartIndex < 1)
+            startDisplacement = -1 * spikeStartIndex;
+            spikeStartIndex = 1;
+        end
+        spikeEndIndex = spikeMidIndex + spikeBounds;
+        lengthOfSpike = spikeEndIndex - spikeStartIndex;
+        
+        additionalLength = size(v(spikeStartIndex:spikeEndIndex)) - size(timeVector(1:lengthOfSpike));
+        lengthOfSpike = lengthOfSpike + additionalLength;
+        
+        overlay = plot(timeVector(startDisplacement:lengthOfSpike), v(spikeStartIndex:spikeEndIndex), 'k');
+        overlay.Color(4) = 0.04;
+        hold on;
+    end
 end
 
 xlabel("Relative Time (s)");
 ylabel("Responses (uV)");
-title("High Linalool Above Spikes");
+title("High Linalool Spikes");
 
-newFile = strcat(beeOutputFile, '\highTopLinaloolTrace');
+newFile = strcat(beeOutputFile, '\highLinaloolTrace');
 
 print(newFile, '-dpng');
 
+
+%%
 %this script will show the spikes overlayed atop eachother on a plot
 figure;
 
-for i = 1:size(spikeInfo) %Below, ethanol, unfiltered
+for i = 1:size(spikeInfo) %ethanol, unfiltered
     if(spikeInfo{i,4} > 0 && spikeInfo{i,5} == 'ethanol')
         spikeMidIndex = spikeInfo{i,3} * sr;
         spikeBounds = 1 * sr;
@@ -628,13 +644,29 @@ for i = 1:size(spikeInfo) %Below, ethanol, unfiltered
         overlay.Color(4) = 0.05;
         hold on;
     end
+    
+    if(spikeInfo{i,4} < 0 && spikeInfo{i,5} == 'ethanol')
+        spikeMidIndex = spikeInfo{i,3} * sr;
+        spikeBounds = 1 * sr;
+
+        spikeStartIndex = spikeMidIndex - spikeBounds;
+        spikeEndIndex = spikeMidIndex + spikeBounds;
+        lengthOfSpike = spikeEndIndex - spikeStartIndex;
+        
+        additionalLength = size(v(spikeStartIndex:spikeEndIndex)) - size(timeVector(1:lengthOfSpike));
+        lengthOfSpike = lengthOfSpike + additionalLength;
+        
+        overlay = plot(timeVector(1:lengthOfSpike), v(spikeStartIndex:spikeEndIndex), 'k');
+        overlay.Color(4) = 0.04;
+        hold on;
+    end
 end
 
 xlabel("Relative Time (s)");
 ylabel("Responses (uV)");
-title("Ethanol Above Spikes");
+title("Ethanol Spikes");
 
-newFile = strcat(beeOutputFile, '\allTopEthanolTrace');
+newFile = strcat(beeOutputFile, '\allEthanolTrace');
 
 print(newFile, '-dpng');
 
